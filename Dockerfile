@@ -145,7 +145,6 @@ RUN PYTHONPATH=/hyperagents python domains/imo/setup_proofgrader_repo.py && pip 
 # ccproxy during collection (no credentials available at build time).
 RUN ANTHROPIC_AUTH_MODE= python -m pytest tests/ \
     --ignore=tests/test_oauth_integration.py \
-    --ignore=tests/test_ollama_integration.py \
     -q --tb=short
 
 # Download things for balrog domains
