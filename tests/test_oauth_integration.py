@@ -17,10 +17,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Skip all tests in this module if OAuth mode is not configured
+from conftest import proxy_preconfigured  # noqa: E402
+
+# Skip all tests in this module if OAuth mode is not configured AND proxy is
+# not pre-configured (i.e. neither local OAuth nor Docker forwarded proxy).
 pytestmark = pytest.mark.skipif(
-    os.getenv("ANTHROPIC_AUTH_MODE") != "oauth",
-    reason="ANTHROPIC_AUTH_MODE=oauth not set — skipping OAuth integration tests",
+    os.getenv("ANTHROPIC_AUTH_MODE") != "oauth" and not proxy_preconfigured(),
+    reason="ANTHROPIC_AUTH_MODE=oauth not set and no pre-configured proxy — skipping OAuth integration tests",
 )
 
 _CREDS_PATH = os.path.expanduser("~/.claude/.credentials.json")
@@ -41,11 +44,21 @@ def _read_oauth_token() -> str | None:
 
 @pytest.fixture(scope="module")
 def ccproxy_running():
-    """Ensure ccproxy is started once for the whole module.
+    """Ensure the Anthropic proxy is available for the whole module.
 
-    Reads credentials from ~/.claude/.credentials.json directly (no
-    subprocess auth check) to avoid entry-point discovery issues in pytest.
+    Three modes:
+    1. Pre-configured (Docker / CI): ANTHROPIC_BASE_URL already points at a
+       running proxy — yield immediately, nothing to start or stop.
+    2. Local OAuth, ccproxy already running on port: reuse it.
+    3. Local OAuth, ccproxy not running: start it from credentials file.
     """
+    from conftest import proxy_preconfigured
+
+    # Mode 1: proxy URL already injected (e.g. Docker --network=host)
+    if proxy_preconfigured():
+        yield
+        return
+
     from utils.ccproxy_manager import (
         is_ccproxy_running,
         start_ccproxy,
@@ -62,11 +75,13 @@ def ccproxy_running():
 
     port = int(os.getenv("CCPROXY_PORT", "8765"))
 
+    # Mode 2: ccproxy already running locally
     if is_ccproxy_running(port):
         setup_ccproxy_env(port)
         yield
         return
 
+    # Mode 3: start ccproxy locally
     _patch_ccproxy_oauth_header()
     try:
         proc = start_ccproxy(port)
@@ -85,6 +100,9 @@ def ccproxy_running():
 
 class TestCcproxyHealth:
     def test_ccproxy_binary_found(self):
+        from conftest import proxy_preconfigured
+        if proxy_preconfigured():
+            pytest.skip("Proxy pre-configured via env vars — binary not required")
         from utils.ccproxy_manager import is_ccproxy_available
         assert is_ccproxy_available(), (
             "ccproxy binary not found — install with: pip install ccproxy-api"
@@ -92,6 +110,9 @@ class TestCcproxyHealth:
 
     def test_claude_credentials_present(self):
         """Claude Code has written OAuth credentials to disk."""
+        from conftest import proxy_preconfigured
+        if proxy_preconfigured():
+            pytest.skip("Proxy pre-configured via env vars — credentials file not required")
         assert os.path.exists(_CREDS_PATH), (
             f"{_CREDS_PATH} not found — log in with Claude Code first"
         )
@@ -99,9 +120,24 @@ class TestCcproxyHealth:
         assert token, "claudeAiOauth.accessToken missing in credentials file"
 
     def test_ccproxy_serving(self, ccproxy_running):
-        from utils.ccproxy_manager import is_ccproxy_running
-        port = int(os.getenv("CCPROXY_PORT", "8765"))
-        assert is_ccproxy_running(port), f"ccproxy not responding on port {port}"
+        """Proxy endpoint is reachable (either local ccproxy or forwarded host proxy)."""
+        import httpx
+        from conftest import proxy_preconfigured
+        base_url = os.getenv("ANTHROPIC_BASE_URL", "")
+        if proxy_preconfigured():
+            # Derive the health URL from ANTHROPIC_BASE_URL (strip /claude suffix)
+            health_base = base_url.rstrip("/claude").rstrip("/")
+            health_url = f"{health_base}/health/live"
+        else:
+            from utils.ccproxy_manager import is_ccproxy_running
+            port = int(os.getenv("CCPROXY_PORT", "8765"))
+            assert is_ccproxy_running(port), f"ccproxy not responding on port {port}"
+            return
+        try:
+            resp = httpx.get(health_url, timeout=5.0)
+            assert resp.status_code == 200, f"Proxy health check failed: {resp.status_code}"
+        except Exception as e:
+            pytest.fail(f"Proxy health check unreachable at {health_url}: {e}")
 
     def test_anthropic_base_url_set(self, ccproxy_running):
         base_url = os.getenv("ANTHROPIC_BASE_URL", "")
@@ -169,8 +205,14 @@ class TestLiveClaudeCall:
 
 class TestCcproxyProxy:
     def test_proxy_health_endpoint(self, ccproxy_running):
-        """ccproxy /health/live returns 200."""
+        """Proxy /health/live returns 200."""
         import httpx
-        port = int(os.getenv("CCPROXY_PORT", "8765"))
-        resp = httpx.get(f"http://127.0.0.1:{port}/health/live", timeout=5.0)
+        from conftest import proxy_preconfigured
+        base_url = os.getenv("ANTHROPIC_BASE_URL", "")
+        if proxy_preconfigured():
+            health_url = base_url.rstrip("/claude").rstrip("/") + "/health/live"
+        else:
+            port = int(os.getenv("CCPROXY_PORT", "8765"))
+            health_url = f"http://127.0.0.1:{port}/health/live"
+        resp = httpx.get(health_url, timeout=5.0)
         assert resp.status_code == 200

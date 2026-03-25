@@ -140,6 +140,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Generate and install proofgrader for imo_proof domain
 RUN PYTHONPATH=/hyperagents python domains/imo/setup_proofgrader_repo.py && pip install -e proofgrader_repo
 
+# Run unit tests (excludes OAuth integration tests which need a live proxy)
+RUN python -m pytest tests/ \
+    --ignore=tests/test_oauth_integration.py \
+    -q --tb=short
+
 # Download things for balrog domains
 RUN python -m domains.balrog.scripts.post_install
 
