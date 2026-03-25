@@ -1,7 +1,7 @@
 ---
 title: "feat: Add Ollama provider support (Qwen2.5-Coder 7B)"
 type: feat
-status: active
+status: completed
 date: 2026-03-25
 ---
 
