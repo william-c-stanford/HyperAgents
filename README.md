@@ -47,9 +47,15 @@ ANTHROPIC_AUTH_MODE=oauth
 At runtime, a local ccproxy instance starts automatically and routes all Anthropic calls through your subscription's OAuth token (stored by Claude Code in `~/.claude/.credentials.json`).
 
 ```bash
-# Install things
+# Install things (Fedora/RHEL)
 sudo dnf install -y python3.12-devel
 sudo dnf install -y graphviz graphviz-devel cmake ninja-build bzip2-devel zlib-devel ncurses-devel libffi-devel
+```
+
+```bash
+# Install things (macOS)
+xcode-select --install  # if not already installed
+brew install python@3.12 graphviz cmake ninja
 ```
 
 ```bash
