@@ -1,6 +1,8 @@
+from agent.llm import DEFAULT_MODEL
+
 QUESTION_ID = "Grading ID"
 GROUND_TRUTH_KEY = "Reward"
-MODEL = "gpt-o4-mini-genai"
+MODEL = DEFAULT_MODEL
 
 def format_input_dict(row):
     # Extract the inputs for the task from the row
