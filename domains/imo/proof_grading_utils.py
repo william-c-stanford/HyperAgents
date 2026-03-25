@@ -1,8 +1,8 @@
-from agent.llm import DEFAULT_MODEL
+from agent.llm import EVAL_MODEL
 
 QUESTION_ID = "Problem ID"
 GROUND_TRUTH_KEY = None  # Ground truth does not exist
-MODEL = DEFAULT_MODEL
+MODEL = EVAL_MODEL
 
 def format_input_dict(row):
     # Extract the inputs for the task from the row

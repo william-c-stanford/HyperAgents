@@ -62,6 +62,67 @@ elif os.getenv("ANTHROPIC_AUTH_MODE") == "oauth":
 else:
     DEFAULT_MODEL = OPENAI_MODEL
 
+# ---------------------------------------------------------------------------
+# Credential validation
+# ---------------------------------------------------------------------------
+
+def _check_model_credentials(model: str) -> tuple[bool, str]:
+    """Return (ok, reason) indicating whether credentials for `model` are present.
+
+    Checks are intentionally lightweight (env var presence / reachability probe)
+    so the import stays fast.
+    """
+    m = model.lower()
+    if m.startswith("ollama"):
+        import httpx as _httpx
+        base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+        try:
+            if _httpx.get(f"{base}/api/tags", timeout=2.0).status_code == 200:
+                return True, ""
+        except Exception:
+            pass
+        return False, f"Ollama not reachable at {base} — start Ollama or set OLLAMA_API_BASE"
+    if m.startswith("anthropic") or "claude" in m:
+        if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_MODE") == "oauth":
+            return True, ""
+        return False, "ANTHROPIC_API_KEY not set and ANTHROPIC_AUTH_MODE != oauth"
+    if m.startswith("openai") or "gpt" in m or m.startswith("o1") or m.startswith("o3") or m.startswith("o4"):
+        if os.getenv("OPENAI_API_KEY"):
+            return True, ""
+        return False, "OPENAI_API_KEY not set"
+    if m.startswith("gemini"):
+        if os.getenv("GEMINI_API_KEY"):
+            return True, ""
+        return False, "GEMINI_API_KEY not set"
+    # Unknown provider — let litellm decide at call time
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Eval model selection
+# ---------------------------------------------------------------------------
+# EVAL_MODEL sets the model used by domain evaluators / harness.
+# Defaults to DEFAULT_MODEL. If set to a model whose credentials are missing,
+# a warning is emitted and it falls back to DEFAULT_MODEL.
+
+import warnings as _warnings
+
+_eval_model_raw = os.getenv("EVAL_MODEL", "")
+if _eval_model_raw:
+    _ok, _reason = _check_model_credentials(_eval_model_raw)
+    if not _ok:
+        _warnings.warn(
+            f"EVAL_MODEL='{_eval_model_raw}' cannot be used: {_reason}. "
+            f"Falling back to DEFAULT_MODEL ({DEFAULT_MODEL}).",
+            UserWarning,
+            stacklevel=1,
+        )
+        EVAL_MODEL = DEFAULT_MODEL
+    else:
+        EVAL_MODEL = _eval_model_raw
+else:
+    EVAL_MODEL = DEFAULT_MODEL
+
 litellm.drop_params=True
 
 @backoff.on_exception(
