@@ -138,7 +138,7 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Generate and install proofgrader for imo_proof domain
-RUN python domains/imo/setup_proofgrader_repo.py && pip install -e proofgrader_repo
+RUN PYTHONPATH=/hyperagents python domains/imo/setup_proofgrader_repo.py && pip install -e proofgrader_repo
 
 # Download things for balrog domains
 RUN python -m domains.balrog.scripts.post_install
