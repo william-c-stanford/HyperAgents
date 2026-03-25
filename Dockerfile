@@ -140,12 +140,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Generate and install proofgrader for imo_proof domain
 RUN PYTHONPATH=/hyperagents python domains/imo/setup_proofgrader_repo.py && pip install -e proofgrader_repo
 
-# Run unit tests (excludes OAuth integration tests which need a live proxy).
-# Explicitly clear ANTHROPIC_AUTH_MODE so llm.py does not attempt to start
-# ccproxy during collection (no credentials available at build time).
-RUN ANTHROPIC_AUTH_MODE= python -m pytest tests/ \
-    --ignore=tests/test_oauth_integration.py \
-    -q --tb=short
+# Run full test suite during build.
+# ANTHROPIC_AUTH_MODE is cleared so llm.py's import-time ccproxy check does
+# not fire (no credentials at build time). Integration tests skip with visible
+# warnings when their services are unreachable; they run when reachable
+# (e.g. Ollama via --network=host, OAuth via pre-configured proxy env vars).
+RUN ANTHROPIC_AUTH_MODE= python -m pytest tests/ -q --tb=short
 
 # Download things for balrog domains
 RUN python -m domains.balrog.scripts.post_install

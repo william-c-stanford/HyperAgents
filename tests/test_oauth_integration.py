@@ -5,14 +5,23 @@ These tests make REAL LLM calls. They require:
   - Claude Code credentials at ~/.claude/.credentials.json
     (written automatically when you log into Claude Code)
 
-Run with:
-  python -m pytest tests/test_oauth_integration.py -v
+Included in the default test suite. Tests are skipped (with a warning) when
+OAuth is not configured — no extra flags needed.
 
-Skip automatically if OAuth is not configured.
+Run with:
+  python -m pytest tests/ -v                      # full suite
+  python -m pytest tests/test_oauth_integration.py -v  # OAuth only
+
+For Docker (proxy pre-configured via env vars):
+  docker run --network=host \
+    -e ANTHROPIC_BASE_URL=http://127.0.0.1:8765/claude \
+    -e ANTHROPIC_API_KEY=ccproxy-oauth \
+    <image> python -m pytest tests/test_oauth_integration.py -v
 """
 import json
 import os
 import sys
+import warnings
 import pytest
 from dotenv import load_dotenv
 
@@ -23,10 +32,19 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from conftest import proxy_preconfigured
 
-# Skip all tests in this module if OAuth mode is not configured AND proxy is
-# not pre-configured (i.e. neither local OAuth nor Docker forwarded proxy).
+_OAUTH_UP = os.getenv("ANTHROPIC_AUTH_MODE") == "oauth" or proxy_preconfigured()
+
+# Emit a visible warning when OAuth is unavailable so the skip is not silent.
+if not _OAUTH_UP:
+    warnings.warn(
+        "OAuth not configured — Claude OAuth integration tests will be skipped. "
+        "To run them: set ANTHROPIC_AUTH_MODE=oauth and run `ccproxy auth login claude_api`",
+        UserWarning,
+        stacklevel=1,
+    )
+
 pytestmark = pytest.mark.skipif(
-    os.getenv("ANTHROPIC_AUTH_MODE") != "oauth" and not proxy_preconfigured(),
+    not _OAUTH_UP,
     reason="ANTHROPIC_AUTH_MODE=oauth not set and no pre-configured proxy — skipping OAuth integration tests",
 )
 

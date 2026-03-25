@@ -118,7 +118,7 @@ bash ./setup_initial.sh
 # Full test suite — Ollama tests included; skipped with a warning if Ollama is not running
 python -m pytest tests/ -v
 
-# Unit tests only (no external services)
+# Unit tests only (suppress integration test warnings)
 python -m pytest tests/ \
   --ignore=tests/test_oauth_integration.py \
   --ignore=tests/test_ollama_integration.py \
