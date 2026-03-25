@@ -115,16 +115,19 @@ bash ./setup_initial.sh
 ## Testing
 
 ```bash
-# Unit tests (no external services required)
+# Full test suite — Ollama tests included; skipped with a warning if Ollama is not running
+python -m pytest tests/ -v
+
+# Unit tests only (no external services)
 python -m pytest tests/ \
   --ignore=tests/test_oauth_integration.py \
   --ignore=tests/test_ollama_integration.py \
   -v
 
-# OAuth integration tests (requires ANTHROPIC_AUTH_MODE=oauth and ccproxy authenticated)
+# OAuth integration tests only (requires ANTHROPIC_AUTH_MODE=oauth)
 python -m pytest tests/test_oauth_integration.py -v
 
-# Ollama integration tests (requires Ollama running with model pulled)
+# Ollama integration tests only
 python -m pytest tests/test_ollama_integration.py -v
 
 # Ollama tests against a specific model or remote host

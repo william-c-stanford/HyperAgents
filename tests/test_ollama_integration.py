@@ -3,24 +3,27 @@
 These tests make REAL LLM calls against a locally running Ollama instance.
 They require:
   - Ollama installed and running (https://ollama.com)
-  - The target model pulled: ollama pull qwen2.5-coder:7b-instruct-q4_K_M
+  - The target model pulled: ollama pull qwen3.5:9b-q4_K_M
+
+Included in the default test suite. Tests are skipped (with a warning) when
+Ollama is not reachable — no extra flags needed.
 
 Run with:
-  python -m pytest tests/test_ollama_integration.py -v
-
-Skip automatically if Ollama is not reachable.
+  python -m pytest tests/ -v                     # full suite
+  python -m pytest tests/test_ollama_integration.py -v  # Ollama only
 
 For Docker (with --network=host):
   docker run --network=host <image> \
     python -m pytest tests/test_ollama_integration.py -v
 
 To use a different model or host:
-  OLLAMA_MODEL=ollama_chat/qwen2.5-coder:7b-instruct-q5_K_M \
+  OLLAMA_MODEL=ollama_chat/qwen3.5:9b-q5_K_M \
   OLLAMA_API_BASE=http://localhost:11434 \
   python -m pytest tests/test_ollama_integration.py -v
 """
 import os
 import sys
+import warnings
 import pytest
 
 # Ensure the tests/ directory is on sys.path so conftest helpers are importable
@@ -28,9 +31,21 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from conftest import ollama_preconfigured
 
-# Skip the entire module when Ollama is not reachable.
+_OLLAMA_UP = ollama_preconfigured()
+
+# Emit a visible warning when Ollama is unavailable so the skip is not silent.
+if not _OLLAMA_UP:
+    _base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
+    warnings.warn(
+        f"Ollama not reachable at {_base} — "
+        "Ollama integration tests will be skipped. "
+        "To run them: start Ollama and run `ollama pull qwen3.5:9b-q4_K_M`",
+        UserWarning,
+        stacklevel=1,
+    )
+
 pytestmark = pytest.mark.skipif(
-    not ollama_preconfigured(),
+    not _OLLAMA_UP,
     reason="Ollama not reachable — start Ollama and pull the model, then re-run",
 )
 
@@ -74,9 +89,14 @@ def ollama_running():
     )
 
     if not model_present:
+        warnings.warn(
+            f"Ollama model '{target}' not pulled — "
+            f"run: ollama pull {target}",
+            UserWarning,
+            stacklevel=1,
+        )
         pytest.skip(
-            f"Model '{target}' not found in Ollama.\n"
-            f"Pull it with: ollama pull {target}\n"
+            f"Model '{target}' not pulled. Run: ollama pull {target}\n"
             f"Available models: {pulled or '(none)'}"
         )
 

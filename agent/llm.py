@@ -35,6 +35,33 @@ GEMINI_FLASH_MODEL = "gemini/gemini-2.5-flash"
 # Override OLLAMA_API_BASE (default http://localhost:11434) to point at a remote Ollama host.
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "ollama_chat/qwen3.5:9b-q4_K_M")
 
+# ---------------------------------------------------------------------------
+# Provider selection
+# ---------------------------------------------------------------------------
+# Set LLM_PROVIDER in .env to choose the default model when multiple providers
+# are configured. If unset, falls back to oauth → Claude, otherwise OpenAI.
+#
+#   LLM_PROVIDER=ollama     → OLLAMA_MODEL  (local Ollama instance)
+#   LLM_PROVIDER=oauth      → CLAUDE_MODEL  (Claude via ccproxy OAuth)
+#   LLM_PROVIDER=anthropic  → CLAUDE_MODEL  (Claude via direct API key)
+#   LLM_PROVIDER=openai     → OPENAI_MODEL
+#   LLM_PROVIDER=gemini     → GEMINI_MODEL
+#
+_PROVIDER_MAP = {
+    "ollama": lambda: OLLAMA_MODEL,
+    "oauth": lambda: CLAUDE_MODEL,
+    "anthropic": lambda: CLAUDE_MODEL,
+    "openai": lambda: OPENAI_MODEL,
+    "gemini": lambda: GEMINI_MODEL,
+}
+_provider = os.getenv("LLM_PROVIDER", "").lower()
+if _provider in _PROVIDER_MAP:
+    DEFAULT_MODEL = _PROVIDER_MAP[_provider]()
+elif os.getenv("ANTHROPIC_AUTH_MODE") == "oauth":
+    DEFAULT_MODEL = CLAUDE_MODEL
+else:
+    DEFAULT_MODEL = OPENAI_MODEL
+
 litellm.drop_params=True
 
 @backoff.on_exception(
@@ -45,7 +72,7 @@ litellm.drop_params=True
 )
 def get_response_from_llm(
     msg: str,
-    model: str = OPENAI_MODEL,
+    model: str = DEFAULT_MODEL,
     temperature: float = 0.0,
     max_tokens: int = MAX_TOKENS,
     msg_history=None,
