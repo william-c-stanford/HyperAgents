@@ -1,0 +1,15 @@
+# Never bake secrets or local config into the image
+.env
+.env.*
+!.env.example
+
+# Local Python artifacts
+**/__pycache__
+**/*.pyc
+**/*.pyo
+venv_nat/
+.venv/
+
+# Editor / OS
+.DS_Store
+*.swp
