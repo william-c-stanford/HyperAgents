@@ -241,6 +241,16 @@ def build_container(
         else:
             safe_log("GPU not requested. Running without GPU.", verbose=verbose)
 
+        # Forward LLM provider credentials from host environment into the container.
+        # --network=host means localhost:11434 (Ollama) is already reachable; env vars
+        # are still needed so agent/llm.py resolves the correct provider and credentials.
+        _llm_env_vars = {k: os.environ[k] for k in [
+            "LLM_PROVIDER", "EVAL_MODEL",
+            "OLLAMA_MODEL", "OLLAMA_API_BASE",
+            "ANTHROPIC_AUTH_MODE", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY", "GEMINI_API_KEY",
+        ] if k in os.environ and os.environ[k]}
+
         # Run the container with host networking and volume mount
         # For Podman, we need to pass GPU devices explicitly via security_opt or devices
         run_kwargs = {
@@ -250,6 +260,7 @@ def build_container(
             "tty": True,
             "stdin_open": True,
             "network_mode": "host",
+            "environment": _llm_env_vars,
             "volumes": {
                 os.path.abspath(repo_path): {"bind": f"/{REPO_NAME}", "mode": "rw"}
             },
