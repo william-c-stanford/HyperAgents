@@ -30,6 +30,10 @@ OPENAI_GPT5MINI_MODEL = "openai/gpt-5-mini"
 GEMINI_3_MODEL = "gemini/gemini-3-pro-preview"
 GEMINI_MODEL = "gemini/gemini-2.5-pro"
 GEMINI_FLASH_MODEL = "gemini/gemini-2.5-flash"
+# Ollama local model — configurable via OLLAMA_MODEL env var.
+# Default is Qwen3.5 9B q4_K_M: best quality/size tradeoff for Apple M4.
+# Override OLLAMA_API_BASE (default http://localhost:11434) to point at a remote Ollama host.
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "ollama_chat/qwen3.5:9b-q4_K_M")
 
 litellm.drop_params=True
 
@@ -110,6 +114,7 @@ if __name__ == "__main__":
         ("GEMINI_3_MODEL", GEMINI_3_MODEL),
         ("GEMINI_MODEL", GEMINI_MODEL),
         ("GEMINI_FLASH_MODEL", GEMINI_FLASH_MODEL),
+        ("OLLAMA_MODEL", OLLAMA_MODEL),
     ]
     for name, model in models:
         print(f"\n{'='*50}")

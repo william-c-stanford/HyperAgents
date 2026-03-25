@@ -46,6 +46,36 @@ ANTHROPIC_AUTH_MODE=oauth
 
 At runtime, a local ccproxy instance starts automatically and routes all Anthropic calls through your subscription's OAuth token (stored by Claude Code in `~/.claude/.credentials.json`).
 
+**Option C: Ollama (local model, no API key or subscription needed)**
+
+Run experiments entirely locally using [Ollama](https://ollama.com). The default model is Qwen3.5 9B, optimized for Apple M4.
+
+```bash
+# 1. Install Ollama
+brew install ollama          # macOS
+# or: curl -fsSL https://ollama.com/install.sh | sh  (Linux)
+
+# 2. Pull the default model (q4_K_M — best quality/size for M4 16 GB)
+ollama pull qwen3.5:9b-q4_K_M
+
+# 3. No .env changes needed — Ollama is detected automatically
+#    To use a different quantization, add to .env:
+#    OLLAMA_MODEL=ollama_chat/qwen3.5:9b-q5_K_M
+
+# 4. Pass OLLAMA_MODEL to your experiment
+python generate_loop.py --domains <domain> --model ollama
+```
+
+| Quantization | Size | Recommended for |
+|---|---|---|
+| `q4_K_M` (default) | — | M4 / M4 Pro with 16 GB unified memory |
+| `q5_K_M` | — | M4 / M4 Pro — better quality, still fits 16 GB |
+| `q8_0` | — | M4 Pro/Max with 36 GB+ |
+
+Metal GPU acceleration is automatic on macOS — no configuration needed.
+
+**Docker with Ollama:** Start Ollama on the host first, then run the container with `--network=host`. The container reaches the host Ollama at `http://localhost:11434` automatically.
+
 ```bash
 # Install things (Fedora/RHEL)
 sudo dnf install -y python3.12-devel
@@ -80,6 +110,27 @@ docker build --network=host -t hyperagents .
 ```bash
 # Setup initial agents
 bash ./setup_initial.sh
+```
+
+## Testing
+
+```bash
+# Unit tests (no external services required)
+python -m pytest tests/ \
+  --ignore=tests/test_oauth_integration.py \
+  --ignore=tests/test_ollama_integration.py \
+  -v
+
+# OAuth integration tests (requires ANTHROPIC_AUTH_MODE=oauth and ccproxy authenticated)
+python -m pytest tests/test_oauth_integration.py -v
+
+# Ollama integration tests (requires Ollama running with model pulled)
+python -m pytest tests/test_ollama_integration.py -v
+
+# Ollama tests against a specific model or remote host
+OLLAMA_MODEL=ollama_chat/qwen3.5:9b-q5_K_M \
+OLLAMA_API_BASE=http://192.168.x.x:11434 \
+python -m pytest tests/test_ollama_integration.py -v
 ```
 
 ## Running HyperAgents

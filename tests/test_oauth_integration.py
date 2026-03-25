@@ -12,12 +12,16 @@ Skip automatically if OAuth is not configured.
 """
 import json
 import os
+import sys
 import pytest
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from conftest import proxy_preconfigured  # noqa: E402
+# Ensure the tests/ directory is on sys.path so conftest helpers are importable
+# when this file is collected directly (not via a full suite run).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from conftest import proxy_preconfigured
 
 # Skip all tests in this module if OAuth mode is not configured AND proxy is
 # not pre-configured (i.e. neither local OAuth nor Docker forwarded proxy).
