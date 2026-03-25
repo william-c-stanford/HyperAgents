@@ -103,6 +103,8 @@ def process_entry(entry, out_dname, model_name_or_path, model_patch_paths, root_
         # Run the agent
         env_vars = {
             "ANTHROPIC_API_KEY": os.getenv('ANTHROPIC_API_KEY'),
+            "ANTHROPIC_BASE_URL": os.getenv('ANTHROPIC_BASE_URL', ''),
+            "ANTHROPIC_AUTH_MODE": os.getenv('ANTHROPIC_AUTH_MODE', ''),
             "OPENAI_API_KEY": os.getenv('OPENAI_API_KEY'),
             "METAGEN_ACCESS_TOKEN": os.getenv('METAGEN_ACCESS_TOKEN'),
         }

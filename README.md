@@ -19,12 +19,32 @@
 </div>
 
 ## Setup
+
+### API Keys
+
+**Option A: Direct API keys** — put these into a `.env` file:
 ```bash
-# API keys, put these into .env file
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 GEMINI_API_KEY=...
 ```
+
+**Option B: Claude Code Max subscription (no Anthropic API key needed)**
+
+If you have a Claude Max subscription via [Claude Code](https://claude.ai/code), you can use it directly instead of an Anthropic API key:
+
+```bash
+# 1. Install ccproxy
+pip install ccproxy-api
+
+# 2. Authenticate with your Claude Code subscription
+ccproxy auth login claude_api
+
+# 3. Add to your .env file (ANTHROPIC_API_KEY can be omitted)
+ANTHROPIC_AUTH_MODE=oauth
+```
+
+At runtime, a local ccproxy instance starts automatically and routes all Anthropic calls through your subscription's OAuth token (stored by Claude Code in `~/.claude/.credentials.json`).
 
 ```bash
 # Install things

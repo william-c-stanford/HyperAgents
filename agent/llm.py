@@ -8,6 +8,12 @@ import json
 
 load_dotenv()
 
+# OAuth mode: use Claude Code Max subscription via ccproxy instead of API key
+# Set ANTHROPIC_AUTH_MODE=oauth in .env and run: ccproxy auth login claude_api
+if os.getenv("ANTHROPIC_AUTH_MODE") == "oauth":
+    from utils.ccproxy_manager import maybe_start_ccproxy
+    maybe_start_ccproxy()
+
 MAX_TOKENS = 16384
 
 CLAUDE_MODEL = "anthropic/claude-sonnet-4-5-20250929"
