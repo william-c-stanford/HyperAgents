@@ -304,6 +304,16 @@ def maybe_start_ccproxy() -> subprocess.Popen | None:
     if os.getenv("ANTHROPIC_AUTH_MODE") != "oauth":
         return None
 
+    port = int(os.getenv("CCPROXY_PORT", "8765"))
+
+    # If ccproxy is already running, just point the client at it and return.
+    # Skip the auth subprocess check (which can fail in restricted environments
+    # like pytest due to entry-point discovery issues).
+    if is_ccproxy_running(port):
+        setup_ccproxy_env(port)
+        logger.info("Reusing existing ccproxy on port %d (skipping auth check)", port)
+        return None
+
     if not is_ccproxy_available():
         raise RuntimeError(
             "ccproxy is required for ANTHROPIC_AUTH_MODE=oauth but was not found.\n"
@@ -316,8 +326,6 @@ def maybe_start_ccproxy() -> subprocess.Popen | None:
             f"ccproxy Anthropic OAuth not authenticated: {msg}\n"
             "Run: ccproxy auth login claude_api"
         )
-
-    port = int(os.getenv("CCPROXY_PORT", "8765"))
     if not (1 <= port <= 65535):
         raise ValueError(f"Invalid CCPROXY_PORT: {port}. Must be 1-65535.")
 
