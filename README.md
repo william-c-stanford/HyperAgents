@@ -58,6 +58,15 @@ xcode-select --install  # if not already installed
 brew install python@3.12 graphviz cmake ninja
 ```
 
+> **macOS note:** pygraphviz requires pointing pip at the Homebrew graphviz headers:
+> ```bash
+> pip install pygraphviz \
+>   --config-settings=--global-option=build_ext \
+>   --config-settings=--global-option="-I$(brew --prefix graphviz)/include" \
+>   --config-settings=--global-option="-L$(brew --prefix graphviz)/lib"
+> ```
+> Run this before `pip install -r requirements.txt`.
+
 ```bash
 # Create virtual environment
 python3.12 -m venv venv_nat
