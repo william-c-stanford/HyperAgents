@@ -248,11 +248,17 @@ def _set_ylim_with_padding(ax, ys_clean: list[float]) -> None:
         pad = max(abs(y_min) * 0.05, 0.05)
     else:
         pad = y_range * 0.15
-    # Only shrink current ylim, never expand past what's already set for multi-run
-    cur_lo, cur_hi = ax.get_ylim()
-    new_lo = min(cur_lo, y_min - pad)
-    new_hi = max(cur_hi, y_max + pad)
-    ax.set_ylim(new_lo, new_hi)
+    new_lo = y_min - pad
+    new_hi = y_max + pad
+    # For multi-run: expand window to include all series.
+    # Only expand if axes already has plotted artists (subsequent series);
+    # on the first series just set directly to avoid anchoring at matplotlib's
+    # default [0, 1] which pushes data to the top of the panel.
+    if ax.lines or ax.collections:
+        cur_lo, cur_hi = ax.get_ylim()
+        ax.set_ylim(min(cur_lo, new_lo), max(cur_hi, new_hi))
+    else:
+        ax.set_ylim(new_lo, new_hi)
 
 
 def _plot_series(
