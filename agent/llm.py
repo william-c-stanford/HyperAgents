@@ -16,7 +16,7 @@ if os.getenv("ANTHROPIC_AUTH_MODE") == "oauth":
 
 MAX_TOKENS = 16384
 
-CLAUDE_MODEL = "anthropic/claude-sonnet-4-5-20250929"
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "anthropic/claude-sonnet-4-5-20250929")
 CLAUDE_HAIKU_MODEL = "anthropic/claude-3-haiku-20240307"
 CLAUDE_35NEW_MODEL = "anthropic/claude-3-5-sonnet-20241022"
 OPENAI_MODEL = "openai/gpt-4o"
