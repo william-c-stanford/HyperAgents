@@ -2,7 +2,7 @@
 # FROM python:3.12-slim
 # Base image with GPU support
 # FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
-FROM nvidia/cuda:13.0.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
 
 # Set CUDA and NVIDIA library paths
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib64:/usr/local/nvidia/lib64:/usr/local/nvidia/lib:/usr/local/lib:${LD_LIBRARY_PATH}
