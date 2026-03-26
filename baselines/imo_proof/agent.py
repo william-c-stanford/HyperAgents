@@ -137,7 +137,7 @@ class TaskAgent(AgentSystem):
         if msg_history is None:
             msg_history = []
 
-        new_msg_history = chat_with_agent(
+        new_msg_history, _ = chat_with_agent(
             instruction,
             model=self.model,
             msg_history=msg_history,

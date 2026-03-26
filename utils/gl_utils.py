@@ -157,21 +157,17 @@ def get_node_metadata_key(output_dir, genid, key):
     return metadata.get(key, None)
 
 
-def update_and_save_archive(output_dir, archive, new_node):
+def update_and_save_archive(output_dir, archive, new_node, metrics=None):
     # Update archive
     archive.append(new_node)
+    # Build entry
+    entry = {"current_genid": new_node, "archive": archive}
+    if metrics is not None:
+        entry["metrics"] = metrics
     # Save archive
     archive_file = os.path.join(output_dir, "archive.jsonl")
     with open(archive_file, "a") as f:
-        f.write(
-            json.dumps(
-                {
-                    "current_genid": new_node,
-                    "archive": archive,
-                },
-            )
-            + "\n"
-        )
+        f.write(json.dumps(entry) + "\n")
     # Return updated archive
     return archive
 

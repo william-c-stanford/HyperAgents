@@ -9,8 +9,9 @@ import json
 load_dotenv()
 
 # OAuth mode: use Claude Code Max subscription via ccproxy instead of API key
-# Set ANTHROPIC_AUTH_MODE=oauth in .env and run: ccproxy auth login claude_api
-if os.getenv("ANTHROPIC_AUTH_MODE") == "oauth":
+# Triggered by ANTHROPIC_AUTH_MODE=oauth OR LLM_PROVIDER=oauth
+# Run: ccproxy auth login claude_api
+if os.getenv("ANTHROPIC_AUTH_MODE") == "oauth" or os.getenv("LLM_PROVIDER", "").lower() == "oauth":
     from utils.ccproxy_manager import maybe_start_ccproxy
     maybe_start_ccproxy()
 
@@ -83,9 +84,11 @@ def _check_model_credentials(model: str) -> tuple[bool, str]:
             pass
         return False, f"Ollama not reachable at {base} — start Ollama or set OLLAMA_API_BASE"
     if m.startswith("anthropic") or "claude" in m:
-        if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_MODE") == "oauth":
+        if (os.getenv("ANTHROPIC_API_KEY")
+                or os.getenv("ANTHROPIC_AUTH_MODE") == "oauth"
+                or os.getenv("LLM_PROVIDER", "").lower() == "oauth"):
             return True, ""
-        return False, "ANTHROPIC_API_KEY not set and ANTHROPIC_AUTH_MODE != oauth"
+        return False, "ANTHROPIC_API_KEY not set and neither ANTHROPIC_AUTH_MODE nor LLM_PROVIDER is set to oauth"
     if m.startswith("openai") or "gpt" in m or m.startswith("o1") or m.startswith("o3") or m.startswith("o4"):
         if os.getenv("OPENAI_API_KEY"):
             return True, ""
@@ -182,7 +185,18 @@ def get_response_from_llm(
         for msg in new_msg_history
     ]
 
-    return response_text, new_msg_history, {}
+    # Extract token usage from response
+    try:
+        usage = response.usage
+        token_info = {
+            "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+            "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+        }
+    except Exception:
+        token_info = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    return response_text, new_msg_history, token_info
 
 
 if __name__ == "__main__":

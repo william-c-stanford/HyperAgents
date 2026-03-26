@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import docker
+from agent.llm import DEFAULT_MODEL  # noqa: F401 — triggers ccproxy/provider setup before containers start
+from analysis.entropy_metrics import reconstruct_and_analyze
 from analysis.plot_progress import plot_progress_single, plot_progress_together
 from analysis.visualize_archive import (
     visualize_archive_single,
@@ -614,6 +616,21 @@ def generate(
             run_eval = file_exist_and_not_empty(local_patch_file)
             metadata["run_eval"] = run_eval
 
+            # Compute entropy metrics and read token usage
+            try:
+                token_usage_file = os.path.join(local_agentoutput_folder, "token_usage.json")
+                if os.path.exists(token_usage_file):
+                    with open(token_usage_file) as _f:
+                        c_mod = json.load(_f)
+                else:
+                    c_mod = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+                patch_for_entropy = local_patch_file if file_exist_and_not_empty(local_patch_file) else None
+                entropy_metrics = reconstruct_and_analyze(root_dir, patch_for_entropy)
+                metadata["metrics"] = {**entropy_metrics, "c_mod": c_mod}
+            except Exception as _exc:
+                logger.warning("Entropy/token metric computation failed: %s", _exc)
+                metadata["metrics"] = None
+
             # Run commands to check if the agents are compilable
             run_commands_to_check_compilation(container, run_baseline=run_baseline, edit_select_parent=edit_select_parent)
 
@@ -922,7 +939,7 @@ def generate_loop(
         )
 
         # NOTE: need to update and save archive before running ensembling eval
-        archive = update_and_save_archive(output_dir, archive, new_node=current_genid)
+        archive = update_and_save_archive(output_dir, archive, new_node=current_genid, metrics=metadata.get("metrics"))
 
         # Parent agent failed, update the metadata in the parent node
         if not metadata["parent_agent_success"]:

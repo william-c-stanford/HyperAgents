@@ -99,3 +99,84 @@ class TestMessageHistoryConversion:
             _, new_history, _ = get_response_from_llm("hi")
             for msg in new_history:
                 assert "text" in msg
+
+
+# ---------------------------------------------------------------------------
+# Token usage extraction
+# ---------------------------------------------------------------------------
+
+def _make_mock_response_with_usage(text="hello", prompt_tokens=10, completion_tokens=5):
+    resp = MagicMock()
+    resp.__getitem__ = lambda self, key: (
+        [{"message": {"content": text}}] if key == "choices" else None
+    )
+    usage = MagicMock()
+    usage.prompt_tokens = prompt_tokens
+    usage.completion_tokens = completion_tokens
+    usage.total_tokens = prompt_tokens + completion_tokens
+    resp.usage = usage
+    return resp
+
+
+class TestTokenUsageExtraction:
+    def test_usage_fields_returned_when_present(self):
+        mock_resp = _make_mock_response_with_usage(prompt_tokens=100, completion_tokens=50)
+        with patch("litellm.completion", return_value=mock_resp):
+            from agent.llm import get_response_from_llm
+            _, _, token_info = get_response_from_llm("hi")
+        assert token_info["input_tokens"] == 100
+        assert token_info["output_tokens"] == 50
+        assert token_info["total_tokens"] == 150
+
+    def test_missing_usage_returns_zeros(self):
+        mock_resp = _make_mock_response()
+        mock_resp.usage = None  # Provider returned no usage
+        with patch("litellm.completion", return_value=mock_resp):
+            from agent.llm import get_response_from_llm
+            _, _, token_info = get_response_from_llm("hi")
+        assert token_info == {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    def test_usage_never_empty_dict_when_provider_returns_usage(self):
+        mock_resp = _make_mock_response_with_usage(prompt_tokens=42, completion_tokens=8)
+        with patch("litellm.completion", return_value=mock_resp):
+            from agent.llm import get_response_from_llm
+            _, _, token_info = get_response_from_llm("hi")
+        assert token_info != {}
+        assert "input_tokens" in token_info
+
+
+class TestChatWithAgentUsageAccumulation:
+    def test_chat_with_agent_returns_three_tuple(self):
+        from agent.llm_withtools import chat_with_agent
+        mock_resp = _make_mock_response_with_usage(prompt_tokens=20, completion_tokens=10)
+        mock_resp.usage.total_tokens = 30
+        with patch("litellm.completion", return_value=mock_resp):
+            result = chat_with_agent("hi", model="anthropic/claude-sonnet-4-5-20250929")
+        assert isinstance(result, tuple)
+        assert len(result) == 2  # (new_msg_history, usage_accumulator)
+        _, usage = result
+        assert "input_tokens" in usage
+        assert "output_tokens" in usage
+        assert "total_tokens" in usage
+
+    def test_chat_with_agent_accumulates_across_turns(self):
+        """Multi-turn (tool use) accumulates token counts from each call."""
+        from agent.llm_withtools import chat_with_agent
+
+        call_count = [0]
+        def mock_completion(**kwargs):
+            call_count[0] += 1
+            resp = _make_mock_response_with_usage(
+                text="final answer",  # no <json> blocks → no tool use
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+            return resp
+
+        with patch("litellm.completion", side_effect=mock_completion):
+            _, usage = chat_with_agent("hi", model="anthropic/claude-sonnet-4-5-20250929")
+
+        # Single turn (no tool calls since response has no <json> blocks)
+        assert usage["input_tokens"] == 10
+        assert usage["output_tokens"] == 5
+        assert usage["total_tokens"] == 15

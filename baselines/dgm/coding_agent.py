@@ -100,7 +100,7 @@ class CodingAgent:
 
 Your task is to make changes to the files in the {self.git_tempdir} directory to address the <problem_description>. I have already taken care of the required dependencies.
 """
-        new_msg_history = chat_with_agent(instruction, model=self.code_model, msg_history=[], logging=safe_log, tools_available='all')
+        new_msg_history, _ = chat_with_agent(instruction, model=self.code_model, msg_history=[], logging=safe_log, tools_available='all')
 
 def main():
     parser = argparse.ArgumentParser(description='Process repository with an agentic system.')

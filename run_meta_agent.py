@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 
 from agent.llm import CLAUDE_MODEL
@@ -52,11 +53,24 @@ def main():
         model=args.model,
         chat_history_file=args.chat_history_file,
     )
-    meta_agent.forward(
-        repo_path=args.repo_path,
-        eval_path=args.evals_folder,
-        iterations_left=args.iterations_left,
-    )
+    token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    try:
+        usage = meta_agent.forward(
+            repo_path=args.repo_path,
+            eval_path=args.evals_folder,
+            iterations_left=args.iterations_left,
+        )
+        if isinstance(usage, dict):
+            token_usage = usage
+    finally:
+        # Always write token usage, even if agent errors mid-run
+        token_usage_outfile = (
+            os.path.join(args.outdir, "token_usage.json")
+            if args.outdir
+            else "token_usage.json"
+        )
+        with open(token_usage_outfile, "w") as f:
+            json.dump(token_usage, f)
 
     # Reset unwanted diffs
     reset_paths_to_commit(

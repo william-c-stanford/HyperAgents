@@ -103,6 +103,8 @@ def chat_with_agent(
         msg_history = []
     new_msg_history = msg_history
 
+    usage_accumulator = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
     try:
         # Load all tools
         all_tools = load_tools(logging=logging, names=tools_available)
@@ -117,8 +119,9 @@ def chat_with_agent(
             model=model,
             msg_history=new_msg_history,
         )
+        for key in usage_accumulator:
+            usage_accumulator[key] += info.get(key, 0)
         logging(f"Output: {repr(response)}")
-        # logging(f"Info: {repr(info)}")
 
         # Tool use
         tool_uses = check_for_tool_uses(response)
@@ -160,8 +163,9 @@ def chat_with_agent(
                 model=model,
                 msg_history=new_msg_history,
             )
+            for key in usage_accumulator:
+                usage_accumulator[key] += info.get(key, 0)
             logging(f"Output: {repr(response)}")
-            # logging(f"Info: {repr(info)}")
 
             # Check for next tool use
             tool_uses = check_for_tool_uses(response)
@@ -171,8 +175,8 @@ def chat_with_agent(
         logging(f"Error: {str(e)}")
         raise e
 
-    return new_msg_history
+    return new_msg_history, usage_accumulator
 
 if __name__ == "__main__":
     msg = """hello"""
-    new_msg_history = chat_with_agent(msg)
+    new_msg_history, usage = chat_with_agent(msg)

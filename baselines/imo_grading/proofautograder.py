@@ -74,7 +74,7 @@ class TaskAgent(AgentSystem):
             grading_guidelines=inputs["grading_guidelines"],
             student_answer=inputs["student_answer"],
         )
-        new_msg_history = chat_with_agent(instruction, model=self.model, msg_history=[], logging=self.log)
+        new_msg_history, _ = chat_with_agent(instruction, model=self.model, msg_history=[], logging=self.log)
 
         # Extract the response
         prediction = "None"
