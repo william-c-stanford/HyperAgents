@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_EXCLUDE_DIRS = frozenset({
     "outputs", "venv_nat", ".venv", "venv", "__pycache__", "tests",
     ".git", "node_modules",
+    # Exclude analysis/ permanently so instrumentation scripts never affect
+    # the entropy baseline.  This directory is maintained separately from the
+    # agent codebase and must not be evolved.
+    "analysis",
 })
 
 

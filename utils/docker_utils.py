@@ -251,6 +251,16 @@ def build_container(
             "OPENAI_API_KEY", "GEMINI_API_KEY",
         ] if k in os.environ and os.environ[k]}
 
+        # On macOS Docker Desktop, --network=host doesn't expose the Mac host's localhost
+        # to the container. Replace 127.0.0.1/localhost with host.docker.internal so the
+        # container can reach the host's ccproxy (port 8765) and Ollama (port 11434).
+        if "ANTHROPIC_BASE_URL" in _llm_env_vars:
+            _llm_env_vars["ANTHROPIC_BASE_URL"] = (
+                _llm_env_vars["ANTHROPIC_BASE_URL"]
+                .replace("127.0.0.1", "host.docker.internal")
+                .replace("localhost", "host.docker.internal")
+            )
+
         # Run the container with host networking and volume mount
         # For Podman, we need to pass GPU devices explicitly via security_opt or devices
         run_kwargs = {
@@ -262,7 +272,12 @@ def build_container(
             "network_mode": "host",
             "environment": _llm_env_vars,
             "volumes": {
-                os.path.abspath(repo_path): {"bind": f"/{REPO_NAME}", "mode": "rw"}
+                os.path.abspath(repo_path): {"bind": f"/{REPO_NAME}", "mode": "rw"},
+                # analysis/ is instrumentation — mount read-only so the agent
+                # cannot modify it regardless of what instructions say.
+                os.path.join(os.path.abspath(repo_path), "analysis"): {
+                    "bind": f"/{REPO_NAME}/analysis", "mode": "ro"
+                },
             },
             "command": "tail -f /dev/null",
         }
@@ -282,6 +297,10 @@ def build_container(
                 import subprocess
 
                 volume_mount = f"{os.path.abspath(repo_path)}:/{REPO_NAME}:rw"
+                analysis_mount = (
+                    f"{os.path.join(os.path.abspath(repo_path), 'analysis')}"
+                    f":/{REPO_NAME}/analysis:ro"
+                )
                 cmd = [
                     "podman",
                     "run",
@@ -290,6 +309,8 @@ def build_container(
                     "--network=host",
                     "-v",
                     volume_mount,
+                    "-v",
+                    analysis_mount,
                     "--device",
                     "nvidia.com/gpu=all",  # CDI format for Podman 5.x
                     # Add environment variables for NVIDIA libraries
