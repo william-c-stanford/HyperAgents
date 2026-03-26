@@ -2,25 +2,42 @@
 
 Reads per-generation metrics from archive.jsonl and produces publication-quality
 plots of:
-  - Structural Entropy (H_struct)       — cyan
+  - Structural Entropy (H_struct)       — teal-cyan
   - Coupling Entropy   (H_couple)       — magenta
   - Input tokens   (C_mod component)   — gold
   - Output tokens  (C_mod component)   — rose
-  - Total tokens   (C_mod / C_mod)     — cyan (lighter tint)
+  - Total tokens   (C_mod)             — violet
 
-Usage (standalone):
-    python analysis/plot_metrics.py --path outputs/generate_20260325_212836_252984/
+Single-run usage:
+    python -m analysis.plot_metrics --path outputs/generate_20260325_212836_252984/
 
-Programmatic:
+Compare multiple runs (ablations):
+    python -m analysis.plot_metrics \\
+        --path  outputs/run_null/         --label "Null model" \\
+        --compare outputs/run_entropy/    --label "Entropy selection" \\
+        --compare outputs/run_ablation/   --label "Ablation B" \\
+        --output comparison.png
+
+Programmatic single-run:
     from analysis.plot_metrics import plot_metrics
     plot_metrics(exp_dir)
+
+Programmatic comparison:
+    from analysis.plot_metrics import plot_metrics_compare
+    plot_metrics_compare(
+        runs=[
+            {"label": "Null model",        "path": "outputs/run_null/metrics_summary.json"},
+            {"label": "Entropy selection", "path": "outputs/run_entropy/metrics_summary.json"},
+        ],
+        output_path="outputs/comparison.png",
+    )
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
-import pathlib
 import warnings
 
 import matplotlib as mpl
@@ -30,7 +47,7 @@ import numpy as np
 
 from utils.gl_utils import load_archive_data
 
-__all__ = ["plot_metrics"]
+__all__ = ["plot_metrics", "plot_metrics_compare", "export_metrics_json", "load_metrics_json"]
 
 # ---------------------------------------------------------------------------
 # NeurIPS-style rcParams
@@ -61,97 +78,153 @@ _NEURIPS_RC = {
 }
 
 # ---------------------------------------------------------------------------
-# Color palette — cyan / magenta / gold / rose
+# Color palettes
 # ---------------------------------------------------------------------------
 
-_C = {
+# Single-run: metric-specific colors
+_METRIC_COLOR = {
     "h_struct":     "#17C3B2",   # teal-cyan
     "h_couple":     "#D62598",   # magenta
-    "input_tokens": "#F5C518",   # gold
-    "output_tokens":"#FF6B8A",   # rose
-    "total_tokens": "#7B5EA7",   # violet (distinct from the above)
-    "scatter_alpha": 0.85,
-    "line_alpha": 0.55,
-    "dot_size": 28,
-    "lw": 1.8,
+    "c_mod_input":  "#F5C518",   # gold
+    "c_mod_output": "#FF6B8A",   # rose
+    "c_mod_total":  "#7B5EA7",   # violet
 }
 
-# Panel definitions: (key_path, label, y_axis_label, color_key, scale)
-# key_path is a tuple of keys to drill into the metrics dict
-_PANELS = [
-    (("h_struct",),          r"Structural Entropy $H_{\rm struct}$",  "bits",         "h_struct",     1.0),
-    (("h_couple",),          r"Coupling Entropy $H_{\rm couple}$",    "bits",         "h_couple",     1.0),
-    (("c_mod", "input_tokens"),  "Input Tokens",                      "tokens (k)",   "input_tokens", 1e-3),
-    (("c_mod", "output_tokens"), "Output Tokens",                     "tokens (k)",   "output_tokens",1e-3),
-    (("c_mod", "total_tokens"),  "Total Tokens (C_mod)",              "tokens (k)",   "total_tokens", 1e-3),
+# Multi-run: one color per run, used across all metric panels
+_RUN_PALETTE = [
+    "#17C3B2",   # teal-cyan
+    "#D62598",   # magenta
+    "#F5C518",   # gold
+    "#7B5EA7",   # violet
+    "#FF6B35",   # orange
+    "#4A90D9",   # blue
+]
+
+_SCATTER_ALPHA = 0.85
+_LINE_ALPHA    = 0.55
+_DOT_SIZE      = 28
+_LW            = 1.8
+
+# Panel specs: (json_key, panel_title, y_label, metric_color_key, scale)
+_PANEL_SPECS = [
+    ("h_struct",    r"Structural Entropy  $H_{\rm struct}$", "entropy (bits)", "h_struct",    1.0),
+    ("h_couple",    r"Coupling Entropy  $H_{\rm couple}$",   "entropy (bits)", "h_couple",    1.0),
+    ("c_mod_input", "Input Tokens",                          "tokens (k)",     "c_mod_input", 1e-3),
+    ("c_mod_output","Output Tokens",                         "tokens (k)",     "c_mod_output",1e-3),
+    ("c_mod_total", r"Total Tokens  ($C_{\rm mod}$)",        "tokens (k)",     "c_mod_total", 1e-3),
 ]
 
 
 # ---------------------------------------------------------------------------
-# Data extraction
+# Data extraction from archive.jsonl / metadata.json
 # ---------------------------------------------------------------------------
 
 def _read_metadata_metrics(exp_dir: str, genid) -> dict | None:
-    """Read metrics from a generation's metadata.json, or None if absent."""
-    import json as _json
     meta_path = os.path.join(exp_dir, f"gen_{genid}", "metadata.json")
     if not os.path.exists(meta_path):
         return None
     try:
         with open(meta_path) as f:
-            return _json.load(f).get("metrics")
+            return json.load(f).get("metrics")
     except Exception:
         return None
 
 
-def _extract_metrics(exp_dir: str) -> dict[str, list]:
-    """Return {metric_key: [value_at_gen_0, value_at_gen_1, ...]} in archive order.
+def _extract_from_run_dir(exp_dir: str) -> list[dict]:
+    """Return ordered list of per-generation flat metric dicts from a run directory.
 
-    Skips the 'initial' entry.  Metrics are sourced from archive.jsonl when
-    present (new runs), and fall back to each generation's metadata.json
-    (backfilled runs).  Generations with no metrics anywhere are still included
-    with None values so the x-axis stays consistent.
+    Each dict has the keys defined in _PANEL_SPECS plus 'genid',
+    'generation_index', 'file_count', 'repo_total_tokens'.
+    Skips the 'initial' entry.
     """
     archive_path = os.path.join(os.path.normpath(exp_dir), "archive.jsonl")
     archive_data = load_archive_data(archive_path, last_only=False)
 
     seen: set = set()
-    ordered: list[tuple] = []
+    rows: list[dict] = []
     for entry in archive_data:
         genid = entry.get("current_genid")
         if genid in seen or genid == "initial":
             continue
         seen.add(genid)
-        # Prefer archive.jsonl metrics; fall back to metadata.json
         metrics = entry.get("metrics") or _read_metadata_metrics(exp_dir, genid)
-        ordered.append((genid, metrics))
+        c_mod = (metrics or {}).get("c_mod") or {}
+        rows.append({
+            "genid":              genid,
+            "generation_index":   len(rows),
+            "h_struct":           (metrics or {}).get("h_struct"),
+            "h_couple":           (metrics or {}).get("h_couple"),
+            "file_count":         (metrics or {}).get("file_count"),
+            "repo_total_tokens":  (metrics or {}).get("total_tokens"),
+            "c_mod_input":        c_mod.get("input_tokens"),
+            "c_mod_output":       c_mod.get("output_tokens"),
+            "c_mod_total":        c_mod.get("total_tokens"),
+        })
+    return rows
 
-    result: dict[str, list] = {
-        "genids": [],
-        "h_struct": [],
-        "h_couple": [],
-        "input_tokens": [],
-        "output_tokens": [],
-        "total_tokens": [],
+
+# ---------------------------------------------------------------------------
+# JSON export / load  (the portable interchange format)
+# ---------------------------------------------------------------------------
+
+def export_metrics_json(exp_dir: str, label: str | None = None) -> str:
+    """Extract metrics from a run directory and save metrics_summary.json.
+
+    The JSON is the single source of truth for recreating or comparing plots.
+    It contains all the data needed to reproduce metrics_plot.png, and can be
+    loaded by load_metrics_json() for multi-run comparisons.
+
+    Returns the path to the saved file.
+
+    JSON schema:
+    {
+      "run_id": "generate_20260325_212836_252984",
+      "label": "null model",
+      "generations": [
+        {
+          "genid": 1,
+          "generation_index": 0,
+          "h_struct": 5.9409,
+          "h_couple": 5.6297,
+          "file_count": 122,
+          "repo_total_tokens": 210783,
+          "c_mod_input": null,
+          "c_mod_output": null,
+          "c_mod_total": null
+        },
+        ...
+      ]
     }
+    """
+    run_id = os.path.basename(os.path.normpath(exp_dir))
+    rows = _extract_from_run_dir(exp_dir)
+    payload = {
+        "run_id": run_id,
+        "label": label or run_id,
+        "generations": rows,
+    }
+    out_path = os.path.join(exp_dir, "metrics_summary.json")
+    with open(out_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    return out_path
 
-    for genid, metrics in ordered:
-        result["genids"].append(genid)
-        if metrics is None:
-            result["h_struct"].append(None)
-            result["h_couple"].append(None)
-            result["input_tokens"].append(None)
-            result["output_tokens"].append(None)
-            result["total_tokens"].append(None)
-        else:
-            result["h_struct"].append(metrics.get("h_struct"))
-            result["h_couple"].append(metrics.get("h_couple"))
-            c_mod = metrics.get("c_mod") or {}
-            result["input_tokens"].append(c_mod.get("input_tokens"))
-            result["output_tokens"].append(c_mod.get("output_tokens"))
-            result["total_tokens"].append(c_mod.get("total_tokens"))
 
-    return result
+def load_metrics_json(path: str) -> dict:
+    """Load a metrics_summary.json file.  path can be a run dir or the JSON file."""
+    # Accept either a run dir (auto-locate) or a direct file path
+    if os.path.isdir(path):
+        path = os.path.join(path, "metrics_summary.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+def _generations_to_arrays(generations: list[dict]) -> tuple[list, dict[str, list]]:
+    """Convert generations list to (xs, {metric_key: [values]}) arrays."""
+    xs = [g["generation_index"] for g in generations]
+    arrays: dict[str, list] = {}
+    for key in ("h_struct", "h_couple", "c_mod_input", "c_mod_output", "c_mod_total"):
+        arrays[key] = [g.get(key) for g in generations]
+    return xs, arrays
 
 
 # ---------------------------------------------------------------------------
@@ -159,15 +232,27 @@ def _extract_metrics(exp_dir: str) -> dict[str, list]:
 # ---------------------------------------------------------------------------
 
 def _style_ax(ax, title: str, ylabel: str, xlabel: str = "Generation"):
-    """Apply NeurIPS spine / tick / label styling to an axis."""
     ax.set_title(title, pad=8, fontweight="medium")
     ax.set_xlabel(xlabel, labelpad=5)
     ax.set_ylabel(ylabel, labelpad=5)
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=6))
     ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5, prune="both"))
     ax.tick_params(which="both", direction="out", length=4)
-    # Light background to separate from page
     ax.set_facecolor("#FAFAFA")
+
+
+def _set_ylim_with_padding(ax, ys_clean: list[float]) -> None:
+    y_min, y_max = min(ys_clean), max(ys_clean)
+    y_range = y_max - y_min
+    if y_range < 1e-6:
+        pad = max(abs(y_min) * 0.05, 0.05)
+    else:
+        pad = y_range * 0.15
+    # Only shrink current ylim, never expand past what's already set for multi-run
+    cur_lo, cur_hi = ax.get_ylim()
+    new_lo = min(cur_lo, y_min - pad)
+    new_hi = max(cur_hi, y_max + pad)
+    ax.set_ylim(new_lo, new_hi)
 
 
 def _plot_series(
@@ -177,220 +262,228 @@ def _plot_series(
     color: str,
     scale: float = 1.0,
     label: str | None = None,
-):
-    """Plot a metric series with dots + connecting line + optional rolling mean."""
-    # Filter None values
+    annotate_last: bool = True,
+) -> bool:
+    """Plot one metric series.  Returns True if data was plotted, False if empty."""
     pairs = [(x, y * scale) for x, y in zip(xs, ys_raw) if y is not None]
     if not pairs:
-        # Still set sensible x-axis limits so the panel looks consistent
         if len(xs) >= 2:
             ax.set_xlim(xs[0] - 0.5, xs[-1] + 0.5)
         ax.set_ylim(0, 1)
-        ax.text(
-            0.5, 0.5, "no data",
-            transform=ax.transAxes,
-            ha="center", va="center",
-            color="#AAAAAA", fontsize=10,
-        )
-        ax.set_yticks([])
-        return
+        if not label:  # only show "no data" for single-run (no label)
+            ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
+                    ha="center", va="center", color="#AAAAAA", fontsize=10)
+            ax.set_yticks([])
+        return False
 
     xs_clean, ys_clean = zip(*pairs)
     xs_clean = list(xs_clean)
     ys_clean = list(ys_clean)
 
-    # Ensure x-axis covers the full generation range even if some are missing
     if xs:
         ax.set_xlim(xs[0] - 0.5, xs[-1] + 0.5)
 
-    # Y-padding: near-flat lines get a minimum visual range so they don't look
-    # like noise amplified to fill the axis
-    y_min, y_max = min(ys_clean), max(ys_clean)
-    y_range = y_max - y_min
-    if y_range < 1e-6:
-        pad = max(abs(y_min) * 0.05, 0.05)
-        ax.set_ylim(y_min - pad, y_max + pad)
-    else:
-        pad = y_range * 0.15
-        ax.set_ylim(y_min - pad, y_max + pad)
+    _set_ylim_with_padding(ax, ys_clean)
 
-    # Connecting line (thin, semi-transparent)
-    ax.plot(
-        xs_clean, ys_clean,
-        color=color, lw=_C["lw"],
-        alpha=_C["line_alpha"],
-        zorder=2,
-        label=label,
-    )
+    # Connecting line
+    ax.plot(xs_clean, ys_clean, color=color, lw=_LW, alpha=_LINE_ALPHA,
+            zorder=2, label=label)
 
-    # Individual generation scatter dots
-    ax.scatter(
-        xs_clean, ys_clean,
-        color=color, s=_C["dot_size"],
-        alpha=_C["scatter_alpha"],
-        zorder=3,
-        edgecolors="white", linewidths=0.5,
-    )
+    # Scatter dots
+    ax.scatter(xs_clean, ys_clean, color=color, s=_DOT_SIZE, alpha=_SCATTER_ALPHA,
+               zorder=3, edgecolors="white", linewidths=0.5)
 
-    # Rolling mean overlay when there are enough points
+    # Rolling mean (single-run only, when no label crowding needed)
     n = len(ys_clean)
-    window = max(3, n // 5)
-    if n >= 5:
+    if n >= 5 and label is None:
+        window = max(3, n // 5)
         kernel = np.ones(window) / window
         padded = np.pad(ys_clean, (window // 2, window - window // 2 - 1), mode="edge")
         smoothed = np.convolve(padded, kernel, mode="valid")[:n]
-        ax.plot(
-            xs_clean, smoothed,
-            color=color, lw=2.2,
-            alpha=0.9,
-            zorder=4,
-            ls="-",
-            label=f"rolling mean (w={window})",
+        ax.plot(xs_clean, smoothed, color=color, lw=2.2, alpha=0.9, zorder=4)
+
+    # Final-value annotation (single-run only)
+    if annotate_last and label is None:
+        ax.annotate(
+            f"{ys_clean[-1]:.2f}",
+            xy=(xs_clean[-1], ys_clean[-1]),
+            xytext=(6, 4), textcoords="offset points",
+            fontsize=7.5, color=color, fontweight="semibold",
         )
 
-    # Annotate final value
-    last_x, last_y = xs_clean[-1], ys_clean[-1]
-    ax.annotate(
-        f"{last_y:.2f}",
-        xy=(last_x, last_y),
-        xytext=(6, 4),
-        textcoords="offset points",
-        fontsize=7.5,
-        color=color,
-        fontweight="semibold",
+    return True
+
+
+def _apply_genid_xticks(axes, genid_labels: list[str], n_gens: int) -> None:
+    for ax in axes:
+        tick_positions = ax.get_xticks()
+        valid = [int(t) for t in tick_positions if 0 <= int(t) < n_gens]
+        if valid:
+            ax.set_xticks(valid)
+            ax.set_xticklabels([genid_labels[t] for t in valid], rotation=0)
+
+
+def _build_figure_axes():
+    """Create the standard 2-row, 5-panel figure.  Returns (fig, axes_dict)."""
+    fig = plt.figure(figsize=(13, 5.5))
+    gs = fig.add_gridspec(
+        2, 6, hspace=0.52, wspace=0.55,
+        left=0.07, right=0.97, top=0.92, bottom=0.12,
     )
+    return fig, {
+        "h_struct":    fig.add_subplot(gs[0, 0:3]),
+        "h_couple":    fig.add_subplot(gs[0, 3:6]),
+        "c_mod_input": fig.add_subplot(gs[1, 0:2]),
+        "c_mod_output":fig.add_subplot(gs[1, 2:4]),
+        "c_mod_total": fig.add_subplot(gs[1, 4:6]),
+    }
+
+
+def _save_fig(fig, base_path: str, svg: bool = False) -> None:
+    fig.savefig(base_path)
+    print(f"Saved: {base_path}")
+    if svg:
+        svg_path = base_path.replace(".png", ".svg")
+        fig.savefig(svg_path)
+        print(f"Saved: {svg_path}")
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Public API — single run
 # ---------------------------------------------------------------------------
 
 def plot_metrics(exp_dir: str, svg: bool = False) -> None:
-    """Generate a 5-panel metric trajectory figure and save to exp_dir.
+    """Generate the 5-panel metric figure for a single run and export metrics_summary.json.
 
     Saves:
-      metrics_plot.png  (and metrics_plot.svg if svg=True)
-
-    Args:
-        exp_dir: Path to the run output directory containing archive.jsonl.
-        svg:     Also save an SVG version for vector editing.
+      <exp_dir>/metrics_plot.png        — combined 5-panel figure
+      <exp_dir>/metrics_summary.json    — portable JSON for compare plots
+      <exp_dir>/metrics_<key>.png       — individual panel PNGs
     """
-    data = _extract_metrics(exp_dir)
-    n_gens = len(data["genids"])
+    rows = _extract_from_run_dir(exp_dir)
+    n_gens = len(rows)
     if n_gens == 0:
         warnings.warn(f"plot_metrics: no metric data found in {exp_dir}")
         return
 
-    # Use generation index as x-axis (0, 1, 2, ...) for clean labelling
-    xs = list(range(n_gens))
+    xs, arrays = _generations_to_arrays(rows)
+    genid_labels = [str(r["genid"]) for r in rows]
+
+    # Export portable JSON (so future compare plots can use it without re-reading the run)
+    json_path = export_metrics_json(exp_dir)
+    print(f"Metrics summary: {json_path}")
 
     with mpl.rc_context(_NEURIPS_RC):
-        # --- figure layout: 2-row, 3-col; entropy on top (2 panels centered),
-        #     tokens on bottom (3 panels)
-        fig = plt.figure(figsize=(13, 5.5))
-        gs = fig.add_gridspec(
-            2, 6,
-            hspace=0.52,
-            wspace=0.55,
-            left=0.07, right=0.97, top=0.92, bottom=0.12,
-        )
+        fig, axes = _build_figure_axes()
+        fig.text(0.5, 0.975, "Codebase Entropy Trajectory",
+                 ha="center", va="top", fontsize=12, fontweight="semibold", color="#333333")
 
-        # Top row: 2 entropy panels (each spanning 3 cols of 6)
-        ax_h_struct = fig.add_subplot(gs[0, 0:3])
-        ax_h_couple = fig.add_subplot(gs[0, 3:6])
+        for key, title, ylabel, color_key, scale in _PANEL_SPECS:
+            ax = axes[key]
+            _style_ax(ax, title, ylabel)
+            _plot_series(ax, xs, arrays[key], color=_METRIC_COLOR[color_key], scale=scale)
 
-        # Bottom row: 3 token panels (each spanning 2 cols of 6)
-        ax_input  = fig.add_subplot(gs[1, 0:2])
-        ax_output = fig.add_subplot(gs[1, 2:4])
-        ax_total  = fig.add_subplot(gs[1, 4:6])
+        _apply_genid_xticks(list(axes.values()), genid_labels, n_gens)
+        _save_fig(fig, os.path.join(exp_dir, "metrics_plot.png"), svg=svg)
 
-        # ── top-row section label ──────────────────────────────────────────
-        fig.text(
-            0.5, 0.975, "Codebase Entropy Trajectory",
-            ha="center", va="top", fontsize=12, fontweight="semibold",
-            color="#333333",
-        )
-
-        # ── H_struct ──────────────────────────────────────────────────────
-        _style_ax(ax_h_struct, r"Structural Entropy  $H_{\rm struct}$", "entropy (bits)")
-        _plot_series(ax_h_struct, xs, data["h_struct"], color=_C["h_struct"])
-
-        # ── H_couple ──────────────────────────────────────────────────────
-        _style_ax(ax_h_couple, r"Coupling Entropy  $H_{\rm couple}$", "entropy (bits)")
-        _plot_series(ax_h_couple, xs, data["h_couple"], color=_C["h_couple"])
-
-        # ── tokens ────────────────────────────────────────────────────────
-        _style_ax(ax_input,  "Input Tokens", "tokens (k)")
-        _plot_series(ax_input, xs, data["input_tokens"], color=_C["input_tokens"], scale=1e-3)
-
-        _style_ax(ax_output, "Output Tokens", "tokens (k)")
-        _plot_series(ax_output, xs, data["output_tokens"], color=_C["output_tokens"], scale=1e-3)
-
-        _style_ax(ax_total, r"Total Tokens  ($C_{\rm mod}$)", "tokens (k)")
-        _plot_series(ax_total, xs, data["total_tokens"], color=_C["total_tokens"], scale=1e-3)
-
-        # ── x-tick labels: map index → genid ──────────────────────────────
-        genid_labels = [str(g) for g in data["genids"]]
-        for ax in (ax_h_struct, ax_h_couple, ax_input, ax_output, ax_total):
-            tick_positions = ax.get_xticks()
-            valid_ticks = [int(t) for t in tick_positions if 0 <= int(t) < n_gens]
-            if valid_ticks:
-                ax.set_xticks(valid_ticks)
-                ax.set_xticklabels([genid_labels[t] for t in valid_ticks], rotation=0)
-
-        # ── save ──────────────────────────────────────────────────────────
-        out_png = os.path.join(exp_dir, "metrics_plot.png")
-        fig.savefig(out_png)
-        print(f"Metrics plot saved: {out_png}")
-
-        if svg:
-            out_svg = os.path.join(exp_dir, "metrics_plot.svg")
-            fig.savefig(out_svg)
-            print(f"Metrics plot saved: {out_svg}")
-
-        plt.close(fig)
-
-    # Also save individual plots for each metric panel
-    _save_individual_plots(exp_dir, xs, data, genid_labels, svg=svg)
+    # Individual per-metric plots
+    _save_individual_plots(exp_dir, xs, arrays, genid_labels, svg=svg)
 
 
 def _save_individual_plots(
-    exp_dir: str,
-    xs: list,
-    data: dict,
-    genid_labels: list[str],
+    exp_dir: str, xs: list, arrays: dict, genid_labels: list[str], svg: bool = False,
+) -> None:
+    token_keys = {"c_mod_input", "c_mod_output", "c_mod_total"}
+    with mpl.rc_context(_NEURIPS_RC):
+        for key, title, ylabel, color_key, scale in _PANEL_SPECS:
+            fig, ax = plt.subplots(1, 1, figsize=(4.2, 3.1))
+            _style_ax(ax, title, ylabel)
+            _plot_series(ax, xs, arrays[key], color=_METRIC_COLOR[color_key], scale=scale)
+            n = len(genid_labels)
+            valid = [int(t) for t in ax.get_xticks() if 0 <= int(t) < n]
+            if valid:
+                ax.set_xticks(valid)
+                ax.set_xticklabels([genid_labels[t] for t in valid])
+            _save_fig(fig, os.path.join(exp_dir, f"metrics_{key}.png"), svg=svg)
+
+
+# ---------------------------------------------------------------------------
+# Public API — multi-run comparison
+# ---------------------------------------------------------------------------
+
+def plot_metrics_compare(
+    runs: list[dict],
+    output_path: str,
     svg: bool = False,
 ) -> None:
-    """Save a separate high-quality PNG per metric for use in papers / slides."""
-    metric_specs = [
-        ("h_struct",      r"Structural Entropy  $H_{\rm struct}$",  "entropy (bits)", _C["h_struct"]),
-        ("h_couple",      r"Coupling Entropy  $H_{\rm couple}$",    "entropy (bits)", _C["h_couple"]),
-        ("input_tokens",  "Input Tokens",                            "tokens (k)",     _C["input_tokens"]),
-        ("output_tokens", "Output Tokens",                           "tokens (k)",     _C["output_tokens"]),
-        ("total_tokens",  r"Total Tokens  ($C_{\rm mod}$)",         "tokens (k)",     _C["total_tokens"]),
-    ]
-    token_keys = {"input_tokens", "output_tokens", "total_tokens"}
+    """Overlay metrics from multiple runs on the same 5-panel figure.
+
+    Args:
+        runs: list of dicts, each with:
+              - "path":  path to metrics_summary.json OR a run directory
+              - "label": legend label for this run
+              - "color": (optional) override color hex string
+        output_path: path for the output PNG (e.g. "outputs/comparison.png")
+        svg:         also save an SVG version
+
+    Example:
+        plot_metrics_compare(
+            runs=[
+                {"label": "Null model",        "path": "outputs/null/metrics_summary.json"},
+                {"label": "Entropy selection", "path": "outputs/entropy_sel/metrics_summary.json"},
+            ],
+            output_path="outputs/comparison.png",
+        )
+    """
+    if not runs:
+        raise ValueError("runs must be a non-empty list")
+
+    # Load all run data
+    loaded: list[tuple[str, str, list, list, dict]] = []  # (label, color, xs, genid_labels, arrays)
+    for i, run in enumerate(runs):
+        path = run["path"]
+        label = run.get("label", f"run_{i}")
+        color = run.get("color", _RUN_PALETTE[i % len(_RUN_PALETTE)])
+
+        # Accept run dir or metrics_summary.json path
+        if os.path.isdir(path):
+            summary_json = os.path.join(path, "metrics_summary.json")
+            if not os.path.exists(summary_json):
+                # Auto-export if missing
+                export_metrics_json(path)
+            data = load_metrics_json(summary_json)
+        else:
+            data = load_metrics_json(path)
+
+        rows = data["generations"]
+        xs, arrays = _generations_to_arrays(rows)
+        genid_labels = [str(r["genid"]) for r in rows]
+        loaded.append((label, color, xs, genid_labels, arrays))
 
     with mpl.rc_context(_NEURIPS_RC):
-        for key, title, ylabel, color in metric_specs:
-            fig, ax = plt.subplots(1, 1, figsize=(4.2, 3.1))
-            scale = 1e-3 if key in token_keys else 1.0
-            _plot_series(ax, xs, data[key], color=color, scale=scale)
+        fig, axes = _build_figure_axes()
+        fig.text(0.5, 0.975, "Codebase Metric Comparison",
+                 ha="center", va="top", fontsize=12, fontweight="semibold", color="#333333")
+
+        for key, title, ylabel, _color_key, scale in _PANEL_SPECS:
+            ax = axes[key]
             _style_ax(ax, title, ylabel)
+            any_data = False
+            for label, color, xs, genid_labels, arrays in loaded:
+                plotted = _plot_series(
+                    ax, xs, arrays[key], color=color,
+                    scale=scale, label=label, annotate_last=False,
+                )
+                any_data = any_data or plotted
+            if any_data:
+                ax.legend(loc="best", fontsize=8)
 
-            # x-tick labels → genids
-            n = len(data["genids"])
-            tick_positions = ax.get_xticks()
-            valid_ticks = [int(t) for t in tick_positions if 0 <= int(t) < n]
-            if valid_ticks:
-                ax.set_xticks(valid_ticks)
-                ax.set_xticklabels([genid_labels[t] for t in valid_ticks])
+        # Use the longest run's genid labels for x-ticks
+        longest = max(loaded, key=lambda t: len(t[2]))
+        _apply_genid_xticks(list(axes.values()), longest[3], len(longest[2]))
 
-            out_png = os.path.join(exp_dir, f"metrics_{key}.png")
-            fig.savefig(out_png)
-            if svg:
-                fig.savefig(os.path.join(exp_dir, f"metrics_{key}.svg"))
-            plt.close(fig)
+        _save_fig(fig, output_path, svg=svg)
 
 
 # ---------------------------------------------------------------------------
@@ -399,18 +492,55 @@ def _save_individual_plots(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Plot entropy and token usage trajectory from archive.jsonl."
+        description=(
+            "Plot entropy and token usage trajectories.  "
+            "Pass --compare to overlay multiple runs."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Single run
+  python -m analysis.plot_metrics --path outputs/run_null/
+
+  # Compare two runs
+  python -m analysis.plot_metrics \\
+      --path    outputs/run_null/     --label "Null model" \\
+      --compare outputs/run_entropy/  --label "Entropy selection" \\
+      --output  outputs/comparison.png
+""",
     )
     parser.add_argument(
-        "--path",
-        type=str,
-        required=True,
-        help="Path to the run output directory (must contain archive.jsonl).",
+        "--path", type=str, required=True,
+        help="Primary run directory (must contain archive.jsonl).",
     )
     parser.add_argument(
-        "--svg",
-        action="store_true",
-        help="Also save SVG versions of the plots.",
+        "--compare", type=str, action="append", default=[],
+        metavar="RUN_DIR",
+        help="Additional run directory to overlay (repeatable).",
     )
+    parser.add_argument(
+        "--label", type=str, action="append", default=[],
+        help="Legend label for each run, in order: primary first, then --compare runs.",
+    )
+    parser.add_argument(
+        "--output", type=str, default=None,
+        help="Output path for comparison plot (default: <primary_dir>/metrics_comparison.png).",
+    )
+    parser.add_argument("--svg", action="store_true", help="Also save SVG versions.")
     args = parser.parse_args()
-    plot_metrics(args.path, svg=args.svg)
+
+    if not args.compare:
+        # Single-run mode
+        plot_metrics(args.path, svg=args.svg)
+    else:
+        # Multi-run comparison mode
+        all_paths = [args.path] + args.compare
+        labels = args.label or []
+        runs = []
+        for i, p in enumerate(all_paths):
+            runs.append({
+                "path":  p,
+                "label": labels[i] if i < len(labels) else os.path.basename(p.rstrip("/")),
+            })
+        out = args.output or os.path.join(args.path, "metrics_comparison.png")
+        plot_metrics_compare(runs, output_path=out, svg=args.svg)

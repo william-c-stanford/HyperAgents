@@ -15,3 +15,7 @@ env/
 .env
 .env.*
 !.env.example
+
+outputs/
+
+*.csv
