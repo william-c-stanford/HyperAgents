@@ -9,6 +9,7 @@ from datetime import datetime
 import docker
 from agent.llm import DEFAULT_MODEL  # noqa: F401 — triggers ccproxy/provider setup before containers start
 from analysis.entropy_metrics import reconstruct_and_analyze
+from analysis.plot_metrics import plot_metrics
 from analysis.plot_progress import plot_progress_single, plot_progress_together
 from analysis.visualize_archive import (
     visualize_archive_single,
@@ -1019,6 +1020,12 @@ def generate_loop(
                     visualize_archive_together(
                         domains, output_dir, split=split, type=stype
                     )
+
+        # Entropy and token usage metric plots
+        try:
+            plot_metrics(output_dir)
+        except Exception as _exc:
+            safe_log(f"Warning: metric plots failed: {_exc}")
 
         # Select next parent
         parent_genid = None
